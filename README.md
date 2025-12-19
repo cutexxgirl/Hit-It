@@ -18,6 +18,11 @@ The configuration ensures you have control over the visuals:
 - `Offset Radius`: Adjust how far apart numbers spawn.
 - `Shake`: Toggle or tune the shake intensity for critical hits.
 
+## Compatibility ⚠️
+
+This fork is designed and tested **only for Minecraft 1.20.1**.
+I do not guarantee that it will work on other versions or mod loaders.
+
 ## Credits
 
 This mod is a fork of [Immersive Damage Indicators](https://github.com/Toni-Macaroni/ImmersiveDamageIndicators) by Toni.
