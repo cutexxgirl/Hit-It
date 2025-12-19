@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "package": "toni.immersivedamageindicators.mixins",
+  "compatibilityLevel": "JAVA_17",
+  "minVersion": "0.8",
+  "plugin": "toni.immersivedamageindicators.MixinPlugin",
+  "mixins": [
+    "LivingEntityMixin",
+    "PlayerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "client": [
+  ]
+}
