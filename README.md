@@ -25,5 +25,5 @@ I do not guarantee that it will work on other versions or mod loaders.
 
 ## Credits
 
-This mod is a fork of [Immersive Damage Indicators](https://github.com/Toni-Macaroni/ImmersiveDamageIndicators) by Toni.
+This mod is a fork of [Immersive Damage Indicators](https://github.com/txnimc/ImmersiveDamageIndicators) by **txni**.
 Rebranded and refined by **cutexxgirl**.
