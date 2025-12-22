@@ -62,12 +62,12 @@ import net.neoforged.neoforge.client.gui.ConfigurationScreen;
 
 
 #if FORGELIKE
-@Mod("immersivedamageindicators")
+@Mod(ImmersiveDamageIndicators.ID)
 #endif
 public class ImmersiveDamageIndicators #if FABRIC implements ModInitializer, ClientModInitializer #endif
 {
     public static final String MODNAME = "Immersive Damage Indicators";
-    public static final String ID = "immersivedamageindicators";
+    public static final String ID = "hitit";
     public static final Logger LOGGER = LogManager.getLogger(MODNAME);
     public static final Map<UUID, Float> LAST_ATTACK_SWING = new HashMap<>();
 

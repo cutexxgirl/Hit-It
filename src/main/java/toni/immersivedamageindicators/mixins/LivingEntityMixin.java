@@ -57,7 +57,7 @@ public class LivingEntityMixin {
                 y,
                 z,
                 damageTaken,
-                0xFFFFFF,
+                inst.getId(), // Pass entity ID for particle grouping
                 ImmersiveDamageIndicators.LAST_ATTACK_SWING.getOrDefault(player.getUUID(), 0f)
             ); damageTaken = 0; particleDisplayedThisTick = true;
         }

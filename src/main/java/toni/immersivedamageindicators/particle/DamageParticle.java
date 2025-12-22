@@ -81,8 +81,8 @@ public class DamageParticle extends Particle {
     private final Font fontRenderer = Minecraft.getInstance().font;
 
     public final ImmersiveMessage message;
-    public float fadeout = -1;
-    public float prevFadeout = -1;
+    public float fadeout = 1f;
+    public float prevFadeout = 1f;
 
     public float visualDY = 0;
     public float prevVisualDY = 0;
@@ -92,24 +92,62 @@ public class DamageParticle extends Particle {
 
     private static final java.util.Set<DamageParticle> ACTIVE_PARTICLES = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
     
+    // Timing constants
+    private static final float LIFETIME_SECONDS = 1.7f;
+    private static final float ACCELERATED_FADE_DURATION = 0.3f; // Time to fade out old particles
+    
+    // Real-time tracking for FPS-independent animation
+    private long lastRenderTimeNanos = -1;
+    // Fade system
     private float fadePenalty = 0f;
-    private float targetFadePenalty = 0f;
+    private boolean accelerateDeath = false;
+    private long deathTriggerTimeNanos = -1;
+    
+    // Entity ID for per-mob grouping
+    private int entityId;
+    
+    private boolean isSameEntity(DamageParticle other) {
+        return this.entityId == other.entityId;
+    }
 
     public DamageParticle(ClientLevel clientLevel, double x, double y, double z, double amount, double dColor, double dz) {
         super(clientLevel, x, y, z);
+        
+        // dColor now contains entity ID
+        this.entityId = (int) dColor;
         
         var offsetRadius = AllConfigs.client().offsetRadius.getF();
         this.x += (this.random.nextFloat() * 2 - 1) * offsetRadius;
         this.z += (this.random.nextFloat() * 2 - 1) * offsetRadius;
         this.xo = this.x;
         this.zo = this.z;
-        this.lifetime = 160; 
+        this.lifetime = (int)(LIFETIME_SECONDS * 20);
 
-        // Active particle tracking for overlapping fade API
-        if (ACTIVE_PARTICLES.size() >= 2) {
-             for (DamageParticle p : ACTIVE_PARTICLES) {
-                 p.targetFadePenalty = Math.min(0.8f, p.targetFadePenalty + 0.15f);
-             }
+        // Only affect particles for the same entity
+        int sameEntityCount = 0;
+        for (DamageParticle p : ACTIVE_PARTICLES) {
+            if (this.isSameEntity(p)) {
+                sameEntityCount++;
+                if (!p.accelerateDeath) {
+                    p.fadePenalty = 0.5f;
+                    p.accelerateDeath = true;
+                    p.deathTriggerTimeNanos = System.nanoTime();
+                }
+            }
+        }
+        // Remove oldest for same entity if too many
+        if (sameEntityCount >= 2) {
+            DamageParticle oldest = null;
+            long oldestTrigger = Long.MAX_VALUE;
+            for (DamageParticle p : ACTIVE_PARTICLES) {
+                if (this.isSameEntity(p) && p.deathTriggerTimeNanos > 0 && p.deathTriggerTimeNanos < oldestTrigger) {
+                    oldestTrigger = p.deathTriggerTimeNanos;
+                    oldest = p;
+                }
+            }
+            if (oldest != null) {
+                oldest.remove();
+            }
         }
         ACTIVE_PARTICLES.add(this);
 
@@ -125,21 +163,20 @@ public class DamageParticle extends Particle {
         var hurtColor = AllConfigs.client().hurtColor.get();
         opacity = AllConfigs.client().alpha.get();
 
-        // Простая логика цвета: белый для обычных ударов, красный для критов
         var textColor = isCrit ? hurtColor : defaultColor;
 
         var endTime = 1f;
 
-        this.message = ImmersiveMessage.builder(5f, text)
+        this.message = ImmersiveMessage.builder(LIFETIME_SECONDS, text)
             .anchor(TextAnchor.CENTER_CENTER)
             .slideUp()
-            .fadeIn()
+            .fadeIn(0.15f)
             .size(2.5f)
             .animation(anim -> {
                 if (AllConfigs.client().doSizeEffects.get())
                 {
-                    anim.transition(Binding.Size, 0, 1f, 0f, isCrit ? 3f : 2f, EasingType.EaseOutExpo);
-                    anim.transition(Binding.Size, 1f, 2.5f, isCrit ? 3f : 2f, isCrit ? 1.5f : 1f, EasingType.EaseInOutSine);
+                    anim.transition(Binding.Size, 0, 0.2f, 0f, isCrit ? 3f : 2f, EasingType.EaseOutExpo);
+                    anim.transition(Binding.Size, 0.2f, 0.5f, isCrit ? 3f : 2f, isCrit ? 1.5f : 1f, EasingType.EaseInOutSine);
                 }
 
                 if (AllConfigs.client().doColorEffects.get())
@@ -148,7 +185,7 @@ public class DamageParticle extends Particle {
                 if (AllConfigs.client().doShakeEffects.get())
                     anim.waveEffect(Binding.zRot, (float) (isCrit ? 5f : 2F * sqDz), (float) (isCrit ? 5f : 5F * sqDz), 0.0F, 5f);
             })
-            .fadeOut();
+            .fadeOut(0.2f);
 
         if (PlatformUtils.isModLoaded("caxton") && !IrisCompat.areShadersEnabled())
             message.font(AllConfigs.client().getFont().toString());
@@ -166,6 +203,11 @@ public class DamageParticle extends Particle {
 
     @Override
     public void render(VertexConsumer consumer, Camera camera, float partialTicks) {
+        // Skip rendering if nearly invisible (prevents flash at end of life)
+        if (this.fadeout < 0.02f) {
+            return;
+        }
+        
         Vec3 cameraPos = camera.getPosition();
         float particleX = (float) (Mth.lerp(partialTicks, this.xo, this.x) - cameraPos.x());
         float particleY = (float) (Mth.lerp(partialTicks, this.yo, this.y) - cameraPos.y());
@@ -181,7 +223,7 @@ public class DamageParticle extends Particle {
         double distanceFromCam = new Vec3(particleX, particleY, particleZ).length();
         double inc = Mth.clamp(distanceFromCam / 32f, 0, 5f);
 
-        poseStack.translate(0, 1.0 + (1 + inc / 4f) * Mth.lerp(partialTicks, this.prevVisualDY, this.visualDY), 0);
+        poseStack.translate(0, 1.5 + (1 + inc / 4f) * Mth.lerp(partialTicks, this.prevVisualDY, this.visualDY), 0);
 
         float d2r = 0.017453292F;
         Quaternionf quat = (new Quaternionf()).rotationYXZ(camera.getYRot() * -d2r, camera.getXRot() * d2r, 0f);
@@ -193,8 +235,6 @@ public class DamageParticle extends Particle {
 
         poseStack.translate((1 + inc) * Mth.lerp(partialTicks, this.prevVisualDX, this.visualDX), 0, 0);
         poseStack.scale(-scale, -scale, scale);
-        // Removed explicit translate fadeout here if it conflicts, but visual movement is fine. 
-        // Keeping vertical visual fadeout movement:
         poseStack.translate(0, (4d * (1 - fadeout)), 0); 
         poseStack.translate(0, -distanceFromCam / 10d, 0);
 
@@ -209,7 +249,20 @@ public class DamageParticle extends Particle {
         var forceVanilla = IrisCompat.areShadersEnabled();
         if (forceVanilla) ImmersiveMessagesManager.forceVanillaRenderer = true;
 
-        message.render(graphics, partialTicks);
+        // Calculate real-time delta for FPS-independent animation
+        long now = System.nanoTime();
+        float deltaSec;
+        if (lastRenderTimeNanos < 0) {
+            deltaSec = 0.016f; // First frame, assume ~60fps
+        } else {
+            deltaSec = (now - lastRenderTimeNanos) / 1_000_000_000f;
+            deltaSec = Math.min(deltaSec, 0.1f); // Clamp to avoid huge jumps on lag
+        }
+        lastRenderTimeNanos = now;
+        
+        // ImmersiveMessage.render() expects deltaTicks (it divides by 20 to get seconds)
+        // So we pass deltaSec * 20 to make animation advance by correct real time
+        message.render(graphics, deltaSec * 20f);
 
         if (forceVanilla) ImmersiveMessagesManager.forceVanillaRenderer = false;
         
@@ -222,12 +275,15 @@ public class DamageParticle extends Particle {
         Matrix4f mat = graphics.pose().last().pose();
         MultiBufferSource.BufferSource renderType = graphics.bufferSource();
         Font font = Minecraft.getInstance().font;
-        float fade = FastColor.ARGB32.alpha(tooltip.animation.getColor()) / 255f;
         
-        // Cumulative fade logic + End of life fadeout
-        // We use 'this.fadeout' which we calculate in tick() for the smooth end-of-life fade
-        float combinedAlpha = Math.max(0, (1f - fadePenalty) * fade * this.fadeout);
-        int alpha = (int) (opacity * combinedAlpha);
+        // Use library's alpha combined with our fade penalty and death fade
+        float libraryAlpha = FastColor.ARGB32.alpha(tooltip.animation.getColor()) / 255f;
+        float combinedAlpha = libraryAlpha * (1f - fadePenalty) * this.fadeout;
+        int alpha = (int) (opacity * Math.max(0, combinedAlpha));
+        
+        if (alpha <= 0) {
+            return;
+        }
         
         var color = tooltip.animation.getColor();
 
@@ -290,29 +346,37 @@ public class DamageParticle extends Particle {
         this.yo = this.y;
         this.zo = this.z;
         
-        // Smoothly interpolate fade penalty
-        this.fadePenalty = Mth.lerp(0.1f, this.fadePenalty, this.targetFadePenalty);
+        this.prevFadeout = this.fadeout;
+        
+        // Handle accelerated death - fade out over ACCELERATED_FADE_DURATION seconds
+        if (accelerateDeath && deathTriggerTimeNanos > 0) {
+            float timeSinceDeath = (System.nanoTime() - deathTriggerTimeNanos) / 1_000_000_000f;
+            this.fadeout = Mth.clamp(1f - (timeSinceDeath / ACCELERATED_FADE_DURATION), 0f, 1f);
+            
+            if (timeSinceDeath >= ACCELERATED_FADE_DURATION) {
+                this.remove();
+                return;
+            }
+        } else {
+            // Normal lifetime - let base class handle removal via this.age >= this.lifetime
+            this.fadeout = 1f;
+        }
+        
+        // Visual movement
+        this.prevVisualDY = this.visualDY;
+        this.visualDY += this.yd;
+        this.prevVisualDX = this.visualDX;
+        this.visualDX += this.xd;
+
+        if (Math.sqrt(Mth.square(this.visualDX * 1.5) + Mth.square(this.visualDY - 1)) < 1.9 - 1) {
+            this.yd = this.yd / 2;
+        } else {
+            this.yd = 0;
+            this.xd = 0;
+        }
         
         if (this.age++ >= this.lifetime) {
             this.remove();
-        } else {
-            // New fade out logic: starts later (last 20 ticks) but faster
-            float fadeLength = 20; 
-            this.prevFadeout = this.fadeout;
-            this.fadeout = this.age > (lifetime - fadeLength) ? ((float) lifetime - this.age) / fadeLength : 1;
-
-            this.prevVisualDY = this.visualDY;
-            this.visualDY += this.yd;
-            this.prevVisualDX = this.visualDX;
-            this.visualDX += this.xd;
-
-            if (Math.sqrt(Mth.square(this.visualDX * 1.5) + Mth.square(this.visualDY - 1)) < 1.9 - 1) {
-
-                this.yd = this.yd / 2;
-            } else {
-                this.yd = 0;
-                this.xd = 0;
-            }
         }
     }
 
@@ -341,3 +405,4 @@ public class DamageParticle extends Particle {
         }
     }
 }
+
